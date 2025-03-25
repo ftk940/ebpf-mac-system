@@ -26,10 +26,11 @@ FILE *bpf_err_fp;
 struct my_bpf_data restrict_exec_open_data;
 struct my_bpf_data restrict_exec_read_data;
 struct my_bpf_data restrict_exec_write_data;
+struct my_bpf_data restrict_exec_mmap_data;
 
 struct my_bpf_data restrict_user_read_data;
 struct my_bpf_data restrict_user_write_data;
-//struct my_bpf_data restrict_type_write_data;
+struct my_bpf_data restrict_user_mmap_data;
 
 int events_ringbuf_fd;
 
@@ -54,8 +55,7 @@ int uid_to_groups_fd;
 //static int filename_to_types_map_fd;
 //int err;
 
-char all_syscalls[NR_SYSCALLS][16] = {"read", "write"};
-
+char all_syscalls[NR_SYSCALLS][16] = {"read", "write", "open", "exec", "lock", "ioctl", "fcntl", "mmap"};
 
 int libbpf_print_fn(enum libbpf_print_level level, const char *format, va_list args) {
     return vfprintf(bpf_err_fp, format, args);
@@ -116,10 +116,12 @@ void init_all_bpf_progs() {
     //mkdir("/sys/fs/bpf/restrict_exec_open", 0700);
     mkdir("/sys/fs/bpf/restrict_exec_read", 0700);
     //mkdir("/sys/fs/bpf/restrict_exec_write", 0700);
+    //mkdir("/sys/fs/bpf/restrict_exec_mmap", 0700);
 
     //init_bpf_prog_exec("open", &restrict_exec_open_data);
     init_bpf_prog_exec("read", &restrict_exec_read_data);
     //init_bpf_prog_exec("write", &restrict_exec_write_data);
+    //init_bpf_prog_exec("mmap", &restrict_exec_mmap_data);
 
     default_allow_files_user_fd = init_restricted_files("allow", "user");
     default_deny_files_user_fd = init_restricted_files("deny", "user");
@@ -132,9 +134,11 @@ void init_all_bpf_progs() {
 
     mkdir("/sys/fs/bpf/restrict_user_read", 0700);
     //mkdir("/sys/fs/bpf/restrict_user_write", 0700);
+    //mkdir("/sys/fs/bpf/restrict_user_mmap", 0700);
 
     init_bpf_prog_user("read", &restrict_user_read_data);
     //init_bpf_prog_user("write", &restrict_user_write_data);
+    //init_bpf_prog_user("mmap", &restrict_user_mmap_data);
     
     /*filename_to_types_map_fd = init_filename_to_types_map();
     init_bpf_prog_type("deny_type_write", &deny_type_write_data, filename_to_types_map_fd);*/
@@ -200,12 +204,6 @@ int main(int argc, char *argv[])
 {
     err_fp = stderr;
 
-    // make sure there's only a single instance of the operation
-    if(already_running("/home/qwerty/Desktop/bpf_config/bpfmac.lock")) {
-        fprintf(err_fp, "there's another operation running, please wait till the operation finished.\n");
-        return 0;
-    }
-
     if(argc < 2) {
         fprintf(err_fp, "no args\n");
         return 0;
@@ -232,7 +230,13 @@ int main(int argc, char *argv[])
         start_logging();
         return 0;
     }
+    // make sure there's only a single instance of the operation
+    if(already_running("/home/qwerty/Desktop/bpf_config/bpfmac.lock")) {
+        fprintf(err_fp, "there's another operation running, please wait till the operation finished.\n");
+        return 0;
+    }
 
+    // make sure the system has been initialized
     if(!already_running("/home/qwerty/Desktop/bpf_config/bpfmacd.lock")) {
         fprintf(err_fp, "the system has not been started yet, please use cmd \"init\" first\n");
         return 0;
@@ -330,6 +334,7 @@ int main(int argc, char *argv[])
             return 0;
         }
 
+        //TODO: syscall checking
         strncpy(syscall_name, argv[2], 15);
         syscall_name[15] = '\0';
         strncpy(file_path, argv[3], MAX_PATH_LEN - 1);
@@ -338,6 +343,28 @@ int main(int argc, char *argv[])
         exec_path[MAX_PATH_LEN - 1] = '\0';
 
         addrule_exec(syscall_name, file_path, exec_path);
+        return 0;
+    }
+
+    if(strcmp(argv[1], "delrule_exec") == 0) {
+        char syscall_name[16] = "";
+        char file_path[MAX_PATH_LEN] = "";
+        char exec_path[MAX_PATH_LEN] = "";
+
+        if(argc != 5) {
+            fprintf(err_fp, "wrong args, the cmd should be \"delrule_exec syscall_name file_path exec_path\"\n");          
+            return 0;
+        }
+
+        //TODO: syscall checking
+        strncpy(syscall_name, argv[2], 15);
+        syscall_name[15] = '\0';
+        strncpy(file_path, argv[3], MAX_PATH_LEN - 1);
+        file_path[MAX_PATH_LEN - 1] = '\0';
+        strncpy(exec_path, argv[4], MAX_PATH_LEN - 1);
+        exec_path[MAX_PATH_LEN - 1] = '\0';
+
+        delrule_exec(syscall_name, file_path, exec_path);
         return 0;
     }
 
@@ -359,6 +386,28 @@ int main(int argc, char *argv[])
         syscall_name[MAX_USERNAME_LEN - 1] = '\0';
 
         addrule_user(syscall_name, file_path, username);
+        return 0;
+    }
+
+    if(strcmp(argv[1], "delrule_user") == 0) {
+        char syscall_name[16] = "";
+        char file_path[MAX_PATH_LEN] = "";
+        char username[MAX_USERNAME_LEN] = "";
+
+        if(argc != 5) {
+            fprintf(err_fp, "wrong args, the cmd should be \"delrule_user syscall_name file_path username\"\n");          
+            return 0;
+        }
+
+        // TODO: syscall checking
+        strncpy(syscall_name, argv[2], 15);
+        syscall_name[15] = '\0';
+        strncpy(file_path, argv[3], MAX_PATH_LEN - 1);
+        syscall_name[MAX_PATH_LEN - 1] = '\0';
+        strncpy(username, argv[4], MAX_USERNAME_LEN - 1);
+        syscall_name[MAX_USERNAME_LEN - 1] = '\0';
+
+        delrule_user(syscall_name, file_path, username);
         return 0;
     }
 
@@ -390,6 +439,29 @@ int main(int argc, char *argv[])
         default_type[5] = '\0';             
 
         register_object_type(object_type, restricted_target, default_type);
+        return 0;
+    }
+
+    if(strcmp(argv[1], "unregister_object_type") == 0) {
+        char object_type[MAX_TYPE_LEN] = "";
+        char restricted_target[6] = "";
+
+        if(argc != 4) {
+            fprintf(err_fp, "wrong args, the cmd should be \"unregister_object_type object_type restricted_target \"\n");          
+            return 0;
+        }
+
+        strncpy(object_type, argv[2], MAX_TYPE_LEN - 1);
+        object_type[MAX_TYPE_LEN - 1] = '\0';
+
+        if(strcmp(argv[3], "exec") != 0 && strcmp(argv[3], "user") != 0) {
+            fprintf(err_fp, "wrong restricted target, available options: exec, user\n");
+            return 0;
+        }
+        strncpy(restricted_target, argv[3], 5);
+        restricted_target[5] = '\0';           
+
+        unregister_object_type(object_type, restricted_target);
         return 0;
     }
 
@@ -438,6 +510,51 @@ int main(int argc, char *argv[])
         return 0;
     }
 
+    if(strcmp(argv[1], "unset_type") == 0) {
+        char entity_type[10] = "";
+        char file_path[MAX_PATH_LEN] = "";
+        char type[MAX_TYPE_LEN] = "";
+        char restricted_target[6] = "";
+
+        if(argc < 5) {
+            fprintf(err_fp, "wrong args, the cmd should be \"unset_type entity_type file_path type (restricted_target)\"\n");          
+            return 0;
+        }
+
+        if(strcmp(argv[2], "object") != 0 && strcmp(argv[2], "subject") != 0) {
+            fprintf(err_fp, "wrong entity type, available options: object, subject\n");
+            return 0;
+        }
+        strncpy(entity_type, argv[2], 9);
+        entity_type[9] = '\0';
+
+        if(strcmp(entity_type, "object") == 0) {
+            if(argc != 6) {
+                fprintf(err_fp, "wrong args, the cmd should be \"unset_type object file_path type restricted_target\"\n");          
+                return 0;
+            }
+            if(strcmp(argv[5], "exec") != 0 && strcmp(argv[5], "user") != 0) {
+                fprintf(err_fp, "wrong restricted target, available options: exec, user\n");
+                return 0;
+            }   
+            strncpy(restricted_target, argv[5], 5);
+            restricted_target[5] = '\0';                                  
+        }
+        else {
+            if(argc != 5) {
+                fprintf(err_fp, "wrong args, the cmd should be \"unset_type subject file_path type\"\n");          
+                return 0;
+            }
+        }
+        strncpy(file_path, argv[3], MAX_PATH_LEN - 1);
+        file_path[MAX_PATH_LEN - 1] = '\0';
+        strncpy(type, argv[4], MAX_TYPE_LEN - 1);
+        type[MAX_TYPE_LEN - 1] = '\0';
+
+        unset_type(entity_type, file_path, type, restricted_target);
+        return 0;
+    }
+
     if(strcmp(argv[1], "addrule_type") == 0) {
         char syscall_name[16] = "";
         char object_type[MAX_TYPE_LEN] = "";
@@ -459,6 +576,27 @@ int main(int argc, char *argv[])
         return 0;
     }
 
+    if(strcmp(argv[1], "delrule_type") == 0) {
+        char syscall_name[16] = "";
+        char object_type[MAX_TYPE_LEN] = "";
+        char subject_type[MAX_TYPE_LEN] = "";
+
+        if(argc != 5) {
+            fprintf(err_fp, "wrong args, the cmd should be \"delrule_type syscall_name object_type subject_type\"\n");          
+            return 0;
+        }
+
+        strncpy(syscall_name, argv[2], 15);
+        syscall_name[15] = '\0';
+        strncpy(object_type, argv[3], MAX_TYPE_LEN - 1);
+        object_type[MAX_TYPE_LEN - 1] = '\0';
+        strncpy(subject_type, argv[4], MAX_TYPE_LEN - 1);
+        subject_type[MAX_TYPE_LEN - 1] = '\0';
+
+        delrule_type(syscall_name, object_type, subject_type);
+        return 0;
+    }
+
     if(strcmp(argv[1], "set_group") == 0) {
         char username[MAX_USERNAME_LEN] = "";
         char group[MAX_GROUP_LEN] = "";
@@ -474,6 +612,24 @@ int main(int argc, char *argv[])
         group[MAX_GROUP_LEN - 1] = '\0';
 
         set_group(username, group);
+        return 0;
+    }
+
+    if(strcmp(argv[1], "unset_group") == 0) {
+        char username[MAX_USERNAME_LEN] = "";
+        char group[MAX_GROUP_LEN] = "";
+
+        if(argc != 4) {
+            fprintf(err_fp, "wrong args, the cmd should be \"unset_group username group\"\n");          
+            return 0;
+        }
+
+        strncpy(username, argv[2], MAX_USERNAME_LEN - 1);
+        username[MAX_USERNAME_LEN - 1] = '\0';
+        strncpy(group, argv[3], MAX_GROUP_LEN - 1);
+        group[MAX_GROUP_LEN - 1] = '\0';
+
+        unset_group(username, group);
         return 0;
     }
 
@@ -495,6 +651,27 @@ int main(int argc, char *argv[])
         group[MAX_GROUP_LEN - 1] = '\0';
 
         addrule_group(syscall_name, object_type, group);
+        return 0;
+    }
+
+    if(strcmp(argv[1], "delrule_group") == 0) {
+        char syscall_name[16] = "";
+        char object_type[MAX_TYPE_LEN] = "";
+        char group[MAX_GROUP_LEN] = "";
+
+        if(argc != 5) {
+            fprintf(err_fp, "wrong args, the cmd should be \"delrule_group syscall_name object_type group\"\n");          
+            return 0;
+        }
+
+        strncpy(syscall_name, argv[2], 15);
+        syscall_name[15] = '\0';
+        strncpy(object_type, argv[3], MAX_TYPE_LEN - 1);
+        object_type[MAX_TYPE_LEN - 1] = '\0';
+        strncpy(group, argv[4], MAX_GROUP_LEN - 1);
+        group[MAX_GROUP_LEN - 1] = '\0';
+
+        delrule_group(syscall_name, object_type, group);
         return 0;
     }
 

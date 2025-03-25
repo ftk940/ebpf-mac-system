@@ -6,6 +6,7 @@
 #include <string.h>
 #include <errno.h>
 #include "general_utils.h"
+#include "config_utils.h"
 #include "restricted_files_utils.h"
 
 #include "general_type_utils.h"
@@ -22,6 +23,8 @@ extern int default_allow_object_types_user_fd;
 extern int default_deny_object_types_user_fd;
 
 extern int path_to_object_types_user_fd;
+
+extern char all_syscalls[NR_SYSCALLS][16];
 
 int init_restricted_object_types(char default_type[6], char restricted_target[6]) {
     char config_file_path[128] = "";
@@ -182,7 +185,7 @@ int get_type_default_setting(char object_type[MAX_TYPE_LEN], char restricted_tar
     return NOT_REGISTERED;
 }
 
-static void add_entry_to_config_file_type_default(char default_type[6], char restricted_target[6], char object_type[MAX_TYPE_LEN]) {
+static void add_config_entry_default_type(char default_type[6], char restricted_target[6], char object_type[MAX_TYPE_LEN]) {
     char config_file_path[128] = "";
     snprintf(config_file_path, sizeof(config_file_path), "/home/qwerty/Desktop/bpf_config/default_%s_object_types_%s.config",default_type, restricted_target);
     FILE *fp = fopen(config_file_path, "a");
@@ -222,10 +225,99 @@ void register_object_type(char object_type[MAX_TYPE_LEN], char restricted_target
             fprintf(err_fp, "default_%s_object_types_%s is full\n", default_type, restricted_target);
         return;
     } 
-    add_entry_to_config_file_type_default(default_type, restricted_target, object_type);      
+    add_config_entry_default_type(default_type, restricted_target, object_type);      
 }
 
-static void add_entry_to_config_file_type_set(char entity_type[10],char file_path[MAX_PATH_LEN], char type[MAX_TYPE_LEN], char restricted_target[6]) {
+
+static void delete_config_entry_default_type(char default_type[6], char restricted_target[6], char object_type[MAX_TYPE_LEN]) {
+    char config_file_path[128] = "";
+    snprintf(config_file_path, sizeof(config_file_path), "/home/qwerty/Desktop/bpf_config/default_%s_object_types_%s.config",default_type, restricted_target);
+
+    char del_line[MAX_LINE_LEN] = "";
+    snprintf(del_line, sizeof(del_line), "%s\n", object_type);
+
+    delete_config_entry_matching_line(config_file_path, del_line);
+}
+
+static void delete_object_type_from_config_restriction_map(char permission_type[6], char restricted_target[6], char syscall_name[16], char object_type[MAX_TYPE_LEN]) {
+    char config_file_path[128] = "";
+    snprintf(config_file_path, sizeof(config_file_path), "/home/qwerty/Desktop/bpf_config/%s_%s_%s_map.config",
+             permission_type, restricted_target, syscall_name);
+
+    delete_config_entry_matching_token(config_file_path, object_type, 0);            
+}
+            
+static void delete_object_type_from_config_path_to_types(char restricted_target[6], char object_type[MAX_TYPE_LEN]) {
+    char config_file_path[128] = "";
+    snprintf(config_file_path, sizeof(config_file_path), "/home/qwerty/Desktop/bpf_config/path_to_object_types_%s.config"
+            , restricted_target);
+
+    delete_config_entry_matching_token(config_file_path, object_type, 1);      
+}
+
+void unregister_object_type(char object_type[MAX_TYPE_LEN], char restricted_target[6]) {
+    int default_setting = get_type_default_setting(object_type, restricted_target);
+    char default_type[6] = "";
+    char permission_type[6] = "";
+    if(default_setting == DEFAULT_ALLOW) {
+        strcpy(default_type, "allow");
+        strcpy(permission_type, "deny");
+    }
+    else if(default_setting == DEFAULT_DENY) {
+        strcpy(default_type, "deny");
+        strcpy(permission_type, "allow");
+    }
+    else {
+        fprintf(err_fp, "object type: %s has not been registered yet\n", object_type);
+        return;
+    }
+
+    int err = 0;
+    char pin_path[128] = "";
+    snprintf(pin_path, sizeof(pin_path), "/sys/fs/bpf/default_%s_object_types_%s", default_type, restricted_target);
+    int map_fd = bpf_obj_get(pin_path);
+    //TODO: change cond from (map_fd != -1) to (map_fd >= 0), print error msg when map_fd < 0
+    if(map_fd >= 0) {
+        err = bpf_map_delete_elem(map_fd, object_type);
+        if(err == 0) 
+            delete_config_entry_default_type(default_type, restricted_target, object_type);
+    }
+
+    char restricted_target_type[6] = "";
+    if(strcmp(restricted_target, "exec") == 0)
+        strcpy(restricted_target_type, "type");
+    else 
+        strcpy(restricted_target_type, "group");
+    for(int i = 0; i < NR_SYSCALLS; i++) {
+        snprintf(pin_path, sizeof(pin_path), "/sys/fs/bpf/restrict_%s_%s/%s_%s_%s_map", 
+                restricted_target, all_syscalls[i], permission_type, restricted_target_type, all_syscalls[i]);
+        map_fd = bpf_obj_get(pin_path);
+        if(map_fd >= 0) {
+            err = bpf_map_delete_elem(map_fd, object_type);
+            if(err == 0) 
+                delete_object_type_from_config_restriction_map(permission_type, restricted_target_type, all_syscalls[i], object_type);
+        }
+    }
+
+    snprintf(pin_path, sizeof(pin_path), "/sys/fs/bpf/path_to_object_types_%s", restricted_target);
+    int outer_map_fd = bpf_obj_get(pin_path);
+    if(outer_map_fd >= 0) {
+        char key[2][MAX_PATH_LEN] = {};
+        int idx = 0;
+        int inner_map_id, inner_map_fd;
+        while((bpf_map_get_next_key(outer_map_fd, key[idx], key[idx^1])) == 0) {
+            idx ^= 1;
+            bpf_map_lookup_elem(outer_map_fd, key[idx], &inner_map_id);
+            inner_map_fd = bpf_map_get_fd_by_id(inner_map_id);
+            err = bpf_map_delete_elem(inner_map_fd, object_type);
+            if(err == 0) 
+                fprintf(err_fp, "delete entry: %s %s\n", key[idx], object_type);
+        }
+        delete_object_type_from_config_path_to_types(restricted_target, object_type);          
+    } 
+}
+
+static void add_config_entry_path_to_types(char entity_type[10],char file_path[MAX_PATH_LEN], char type[MAX_TYPE_LEN], char restricted_target[6]) {
     char config_file_path[128] = "";
     if(strcmp(entity_type, "object") == 0)
         snprintf(config_file_path, sizeof(config_file_path), "/home/qwerty/Desktop/bpf_config/path_to_object_types_%s.config", restricted_target);
@@ -266,5 +358,63 @@ void set_type(char entity_type[10], char file_path[MAX_PATH_LEN], char type[MAX_
     int err = update_path_to_types_map(map_fd, file_path, type);
     if(err < 0)
         return;
-    add_entry_to_config_file_type_set(entity_type, file_path, type, restricted_target);
+    add_config_entry_path_to_types(entity_type, file_path, type, restricted_target);
+}
+
+static void delete_config_entry_path_to_types(char entity_type[10],char file_path[MAX_PATH_LEN], char type[MAX_TYPE_LEN], char restricted_target[6]) {
+    char config_file_path[128] = "";
+    if(strcmp(entity_type, "object") == 0)
+        snprintf(config_file_path, sizeof(config_file_path), "/home/qwerty/Desktop/bpf_config/path_to_object_types_%s.config", restricted_target);
+    else
+        snprintf(config_file_path, sizeof(config_file_path), "/home/qwerty/Desktop/bpf_config/path_to_subject_types.config");
+
+    char del_line[MAX_LINE_LEN] = "";
+    snprintf(del_line, sizeof(del_line), "%s %s\n", file_path, type);
+
+    delete_config_entry_matching_line(config_file_path, del_line);  
+}
+
+void unset_type(char entity_type[10], char file_path[MAX_PATH_LEN], char type[MAX_TYPE_LEN], char restricted_target[6]) {
+    if(strcmp(entity_type, "object") == 0) {
+        int file_default_setting = get_file_default_setting(file_path, restricted_target);
+        int type_default_setting = get_type_default_setting(type, restricted_target);
+        if(file_default_setting == NOT_REGISTERED) {
+            fprintf(err_fp, "file: %s hasn't be registered yet.\n", file_path);
+            return;        
+        }
+
+        if(type_default_setting == NOT_REGISTERED) {
+            fprintf(err_fp, "type: %s hasn't be registered yet.\n", type);
+            return;         
+        }
+
+        if(file_default_setting != type_default_setting) {
+            fprintf(err_fp, "default settings do not match.\n");
+            return; 
+        }
+    }
+
+    int outer_map_fd;
+    if(strcmp(entity_type, "subject") == 0)
+        outer_map_fd = path_to_subject_types_fd;
+    else if(strcmp(restricted_target, "exec") == 0)
+        outer_map_fd = path_to_object_types_exec_fd;
+    else
+        outer_map_fd = path_to_object_types_user_fd;
+
+    int err, inner_map_id, inner_map_fd;
+    err = bpf_map_lookup_elem(outer_map_fd, file_path, &inner_map_id);
+    if(err < 0) {
+        fprintf(err_fp, "inner map for %s does not exist\n", file_path);
+        return;
+    }
+
+    inner_map_fd = bpf_map_get_fd_by_id(inner_map_id);
+    err = bpf_map_delete_elem(inner_map_fd, type);
+    if(err < 0) {
+        fprintf(err_fp, "%s is not of type: %s\n", file_path, type);
+        return;
+    }
+
+    delete_config_entry_path_to_types(entity_type, file_path, type, restricted_target);
 }

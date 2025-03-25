@@ -6,14 +6,13 @@
 #include <string.h>
 #include <errno.h>
 #include "general_utils.h"
+#include "config_utils.h"
 #include "restricted_files_utils.h"
 #include "general_type_utils.h"
 
 #include "restrict_type_utils.h"
 
 extern FILE *err_fp;
-
-extern struct my_bpf_data restrict_exec_open_data;
 
 static int update_type_restriction_map_exec(int outer_map_fd, char object_type[MAX_TYPE_LEN], char subject_type[MAX_TYPE_LEN]) {
     int err, inner_map_id, inner_map_fd;
@@ -90,7 +89,7 @@ void init_type_restriction_map_exec(char permission_type[6], char syscall_name[1
     }  
 }
 
-static void add_entry_to_config_file_type_exec(char permission_type[6], char syscall_name[16], char object_type[MAX_TYPE_LEN], char subject_type[MAX_TYPE_LEN]) {
+static void add_config_entry_restriction_map_type(char permission_type[6], char syscall_name[16], char object_type[MAX_TYPE_LEN], char subject_type[MAX_TYPE_LEN]) {
     char config_file_path[128] = "";
     snprintf(config_file_path, sizeof(config_file_path), "/home/qwerty/Desktop/bpf_config/%s_type_%s_map.config",permission_type, syscall_name);
     FILE *fp = fopen(config_file_path, "a");
@@ -122,22 +121,59 @@ void addrule_type(char syscall_name[16], char object_type[MAX_TYPE_LEN], char su
     if (map_fd < 0) 
         fprintf(err_fp, "ERROR: failed to get the map: %s\n", map_name);
 
-    /*if(strcmp(syscall_name, "open") == 0) {
-         map = bpf_object__find_map_by_name(restrict_exec_open_data.obj, map_name);
-    }   
-    else if(strcmp(syscall_name, "read") == 0) {
-    }
-    else if(strcmp(syscall_name, "write") == 0) {
-    }
-    else {
-        fprintf(err_fp, "wrong syscall, available syscalls: open, read, write, exec, ock, ioctl, getattr\n");
-        return;
-    }
-    int map_fd = bpf_map__fd(map);    
-    */
-
     int err = update_type_restriction_map_exec(map_fd, object_type, subject_type);
     if(err < 0)
         return;
-    add_entry_to_config_file_type_exec(permission_type, syscall_name, object_type, subject_type);       
+    add_config_entry_restriction_map_type(permission_type, syscall_name, object_type, subject_type);       
+}
+
+static void delete_config_entry_restriction_map_type(char permission_type[6], char syscall_name[16], char object_type[MAX_TYPE_LEN], char subject_type[MAX_TYPE_LEN]) {
+    char config_file_path[128] = "";
+    snprintf(config_file_path, sizeof(config_file_path), "/home/qwerty/Desktop/bpf_config/%s_type_%s_map.config",permission_type, syscall_name);
+
+    char del_line[MAX_LINE_LEN] = "";
+    snprintf(del_line, sizeof(del_line), "%s %s\n", object_type, subject_type);
+
+    delete_config_entry_matching_line(config_file_path, del_line);
+}
+
+void delrule_type(char syscall_name[16], char object_type[MAX_TYPE_LEN], char subject_type[MAX_TYPE_LEN]) {
+    int default_setting = get_type_default_setting(object_type, "exec");
+    char permission_type[6] = "";
+    if(default_setting == DEFAULT_ALLOW)
+        strcpy(permission_type, "deny");
+    else if(default_setting == DEFAULT_DENY)
+        strcpy(permission_type, "allow");
+    else {
+        fprintf(err_fp, "type: %s has not been registered yet\n", object_type);
+        return;
+    }
+    
+    //TODO: check subject type exist
+
+    char map_name[128] = "";
+    snprintf(map_name, sizeof(map_name), "%s_type_%s_map", permission_type, syscall_name);
+    //struct bpf_map *map = NULL;
+
+    char pin_path[128] = "";
+    snprintf(pin_path, sizeof(pin_path), "/sys/fs/bpf/restrict_exec_%s/%s", syscall_name, map_name);
+    int outer_map_fd = bpf_obj_get(pin_path);
+    if (outer_map_fd < 0) 
+        fprintf(err_fp, "ERROR: failed to get the map: %s\n", map_name);
+    
+    int err, inner_map_id, inner_map_fd;
+    err = bpf_map_lookup_elem(outer_map_fd, object_type, &inner_map_id);
+    if(err < 0) {
+        fprintf(err_fp, "inner map for %s does not exist\n", object_type);
+        return;
+    }
+
+    inner_map_fd = bpf_map_get_fd_by_id(inner_map_id);
+    err = bpf_map_delete_elem(inner_map_fd, subject_type);
+    if(err < 0) {
+        fprintf(err_fp, "subject type: %s is not restricted by the rule\n", subject_type);
+        return;
+    }
+
+    delete_config_entry_restriction_map_type(permission_type, syscall_name, object_type, subject_type);
 }

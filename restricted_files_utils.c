@@ -75,7 +75,7 @@ int init_restricted_files(char default_type[6], char restricted_target[6]) {
     return map_fd;         
 }
 
-static void add_entry_to_config_file_default(char default_type[6], char restricted_target[6], char file_path[MAX_PATH_LEN]) {
+static void add_config_entry_default(char default_type[6], char restricted_target[6], char file_path[MAX_PATH_LEN]) {
     char config_file_path[128] = "";
     snprintf(config_file_path, sizeof(config_file_path), "/home/qwerty/Desktop/bpf_config/default_%s_files_%s.config",default_type, restricted_target);
     FILE *fp = fopen(config_file_path, "a");
@@ -116,7 +116,7 @@ void register_file(char file_path[MAX_PATH_LEN], char restricted_target[6], char
             fprintf(err_fp, "default_%s_files_%s is full\n", default_type, restricted_target);
         return;
     } 
-    add_entry_to_config_file_default(default_type, restricted_target, file_path);      
+    add_config_entry_default(default_type, restricted_target, file_path);      
 }
 
 static void delete_file_from_config_default(char default_type[6], char restricted_target[6], char file_path[MAX_PATH_LEN]) {
@@ -162,29 +162,30 @@ void unregister_file(char file_path[MAX_PATH_LEN], char restricted_target[6]) {
     }
 
     int err = 0;
-    char map_path[128] = "";
-    snprintf(map_path, sizeof(map_path), "/sys/fs/bpf/default_%s_files_%s", default_type, restricted_target);
-    int map_fd = bpf_obj_get(map_path);
-    if(map_fd != -1) {
+    char pin_path[128] = "";
+    snprintf(pin_path, sizeof(pin_path), "/sys/fs/bpf/default_%s_files_%s", default_type, restricted_target);
+    int map_fd = bpf_obj_get(pin_path);
+    //TODO: change cond from (map_fd != -1) to (map_fd >= 0), print error msg when map_fd < 0
+    if(map_fd >= 0) {
         err = bpf_map_delete_elem(map_fd, file_path);
         if(err == 0) 
             delete_file_from_config_default(default_type, restricted_target, file_path);
     }
 
     for(int i = 0; i < NR_SYSCALLS; i++) {
-        snprintf(map_path, sizeof(map_path), "/sys/fs/bpf/restrict_%s_%s/%s_%s_%s_map", 
+        snprintf(pin_path, sizeof(pin_path), "/sys/fs/bpf/restrict_%s_%s/%s_%s_%s_map", 
                 restricted_target, all_syscalls[i], permission_type, restricted_target, all_syscalls[i]);
-        map_fd = bpf_obj_get(map_path);
-        if(map_fd != -1) {
+        map_fd = bpf_obj_get(pin_path);
+        if(map_fd >= 0) {
             err = bpf_map_delete_elem(map_fd, file_path);
             if(err == 0) 
                 delete_file_from_config_restriction_map(permission_type, restricted_target, all_syscalls[i], file_path);
         }
     }
 
-    snprintf(map_path, sizeof(map_path), "/sys/fs/bpf/path_to_object_types_%s", restricted_target);
-    map_fd = bpf_obj_get(map_path);
-    if(map_fd != -1) {
+    snprintf(pin_path, sizeof(pin_path), "/sys/fs/bpf/path_to_object_types_%s", restricted_target);
+    map_fd = bpf_obj_get(pin_path);
+    if(map_fd >= 0) {
         err = bpf_map_delete_elem(map_fd, file_path);
         if(err == 0) 
             delete_file_from_config_path_to_types("object", restricted_target, file_path);

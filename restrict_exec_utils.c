@@ -6,14 +6,13 @@
 #include <string.h>
 #include <errno.h>
 #include "general_utils.h"
+#include "config_utils.h"
 #include "restricted_files_utils.h"
 #include "restrict_type_utils.h"
 
 #include "restrict_exec_utils.h"
 
 extern FILE *err_fp;
-
-extern struct my_bpf_data restrict_exec_open_data;
 
 extern int events_ringbuf_fd;
 
@@ -81,57 +80,6 @@ static int update_restriction_map_exec(int outer_map_fd, char file_path[MAX_PATH
         return -1;
     }    
     return 0;
-}
-
-static void add_entry_to_config_file_exec(char permission_type[6], char syscall_name[16], char file_path[MAX_PATH_LEN], char exec_path[MAX_PATH_LEN]) {
-    char config_file_path[128] = "";
-    snprintf(config_file_path, sizeof(config_file_path), "/home/qwerty/Desktop/bpf_config/%s_exec_%s_map.config",permission_type, syscall_name);
-    FILE *fp = fopen(config_file_path, "a");
-    fprintf(fp, "%s %s\n", file_path, exec_path);
-    fclose(fp);
-}
-
-void addrule_exec(char syscall_name[16], char file_path[MAX_PATH_LEN], char exec_path[MAX_PATH_LEN]) { 
-    int default_setting = get_file_default_setting(file_path, "exec");
-    char permission_type[6] = "";
-    if(default_setting == DEFAULT_ALLOW)
-        strcpy(permission_type, "deny");
-    else if(default_setting == DEFAULT_DENY)
-        strcpy(permission_type, "allow");
-    else {
-        fprintf(err_fp, "file: %s has not been registered yet\n", file_path);
-        return;
-    }
-
-    char map_name[128] = "";
-    snprintf(map_name, sizeof(map_name), "%s_exec_%s_map", permission_type, syscall_name);
-
-    char pin_path[128] = "";
-    snprintf(pin_path, sizeof(pin_path), "/sys/fs/bpf/restrict_exec_%s/%s", syscall_name, map_name);
-    int map_fd = bpf_obj_get(pin_path);
-    if (map_fd < 0) {
-        fprintf(err_fp, "ERROR: failed to get the map: %s\n", map_name);
-        return;
-    } 
-
-    /*if(strcmp(syscall_name, "open") == 0) 
-        map = bpf_object__find_map_by_name(restrict_exec_open_data.obj, map_name);
-    else if(strcmp(syscall_name, "read") == 0) {
-    }
-    else if(strcmp(syscall_name, "write") == 0) {
-    }
-    else {
-        fprintf(err_fp, "wrong syscall, available syscalls: open, read, write, exec, ock, ioctl, getattr\n");
-        return;
-    }
-    int map_fd = bpf_map__fd(map);
-    */
-
-    int err = update_restriction_map_exec(map_fd, file_path, exec_path);
-    if(err < 0) 
-        return;
-
-    add_entry_to_config_file_exec(permission_type, syscall_name, file_path, exec_path);    
 }
 
 static void init_restriction_map_exec(char permission_type[6], char syscall_name[16], struct my_bpf_data *cur_bpf) {
@@ -244,4 +192,105 @@ cleanup:
     cur_bpf->obj = NULL;
     cur_bpf->link = NULL;
 	return;
+}
+
+static void add_config_entry_restriction_map_exec(char permission_type[6], char syscall_name[16], char file_path[MAX_PATH_LEN], char exec_path[MAX_PATH_LEN]) {
+    char config_file_path[128] = "";
+    snprintf(config_file_path, sizeof(config_file_path), "/home/qwerty/Desktop/bpf_config/%s_exec_%s_map.config",permission_type, syscall_name);
+    FILE *fp = fopen(config_file_path, "a");
+    fprintf(fp, "%s %s\n", file_path, exec_path);
+    fclose(fp);
+}
+
+void addrule_exec(char syscall_name[16], char file_path[MAX_PATH_LEN], char exec_path[MAX_PATH_LEN]) { 
+    int default_setting = get_file_default_setting(file_path, "exec");
+    char permission_type[6] = "";
+    if(default_setting == DEFAULT_ALLOW)
+        strcpy(permission_type, "deny");
+    else if(default_setting == DEFAULT_DENY)
+        strcpy(permission_type, "allow");
+    else {
+        fprintf(err_fp, "file: %s has not been registered yet\n", file_path);
+        return;
+    }
+
+    char map_name[128] = "";
+    snprintf(map_name, sizeof(map_name), "%s_exec_%s_map", permission_type, syscall_name);
+
+    char pin_path[128] = "";
+    snprintf(pin_path, sizeof(pin_path), "/sys/fs/bpf/restrict_exec_%s/%s", syscall_name, map_name);
+    int map_fd = bpf_obj_get(pin_path);
+    if (map_fd < 0) {
+        fprintf(err_fp, "ERROR: failed to get the map: %s\n", map_name);
+        return;
+    } 
+
+    /*if(strcmp(syscall_name, "open") == 0) 
+        map = bpf_object__find_map_by_name(restrict_exec_open_data.obj, map_name);
+    else if(strcmp(syscall_name, "read") == 0) {
+    }
+    else if(strcmp(syscall_name, "write") == 0) {
+    }
+    else {
+        fprintf(err_fp, "wrong syscall, available syscalls: open, read, write, exec, ock, ioctl, getattr\n");
+        return;
+    }
+    int map_fd = bpf_map__fd(map);
+    */
+
+    int err = update_restriction_map_exec(map_fd, file_path, exec_path);
+    if(err < 0) 
+        return;
+
+    add_config_entry_restriction_map_exec(permission_type, syscall_name, file_path, exec_path);    
+}
+
+static void delete_config_entry_restriction_map_exec(char permission_type[6], char syscall_name[16], char file_path[MAX_PATH_LEN], char exec_path[MAX_PATH_LEN]) {
+    char config_file_path[128] = "";
+    snprintf(config_file_path, sizeof(config_file_path), "/home/qwerty/Desktop/bpf_config/%s_exec_%s_map.config",permission_type, syscall_name);
+
+    char del_line[MAX_LINE_LEN] = "";
+    snprintf(del_line, sizeof(del_line), "%s %s\n", file_path, exec_path);
+
+    delete_config_entry_matching_line(config_file_path, del_line);
+}
+
+void delrule_exec(char syscall_name[16], char file_path[MAX_PATH_LEN], char exec_path[MAX_PATH_LEN]) { 
+    int default_setting = get_file_default_setting(file_path, "exec");
+    char permission_type[6] = "";
+    if(default_setting == DEFAULT_ALLOW)
+        strcpy(permission_type, "deny");
+    else if(default_setting == DEFAULT_DENY)
+        strcpy(permission_type, "allow");
+    else {
+        fprintf(err_fp, "file: %s has not been registered yet\n", file_path);
+        return;
+    }
+
+    char map_name[128] = "";
+    snprintf(map_name, sizeof(map_name), "%s_exec_%s_map", permission_type, syscall_name);
+
+    char pin_path[128] = "";
+    snprintf(pin_path, sizeof(pin_path), "/sys/fs/bpf/restrict_exec_%s/%s", syscall_name, map_name);
+    int outer_map_fd = bpf_obj_get(pin_path);
+    if (outer_map_fd < 0) {
+        fprintf(err_fp, "ERROR: failed to get the map: %s\n", map_name);
+        return;
+    } 
+
+    int err, inner_map_id, inner_map_fd;
+    err = bpf_map_lookup_elem(outer_map_fd, file_path, &inner_map_id);
+    if(err < 0) {
+        fprintf(err_fp, "inner map for %s does not exist\n", file_path);
+        return;
+    }
+
+    inner_map_fd = bpf_map_get_fd_by_id(inner_map_id);
+    err = bpf_map_delete_elem(inner_map_fd, exec_path);
+    if(err < 0) {
+        fprintf(err_fp, "exec: %s is not restricted by the rule\n", exec_path);
+        return;
+    }
+
+    delete_config_entry_restriction_map_exec(permission_type, syscall_name, file_path, exec_path);
 }

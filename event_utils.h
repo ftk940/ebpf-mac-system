@@ -14,7 +14,7 @@ typedef enum restricted_target_t {
 } restricted_target_t;
 
 typedef enum my_syscall_t {
-	READ, WRITE, OPEN, EXEC, LOCK, IOCTL, GETATTR, MMAP, LINK, UNLINK
+	READ, WRITE, OPEN, EXECVE, LOCK, IOCTL, FCNTL, MMAP//, LINK, UNLINK, SETATTR, GETATTR
 } my_syscall_t;
 
 /* definition of a sample sent to user-space from BPF program */

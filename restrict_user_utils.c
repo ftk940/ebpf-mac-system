@@ -7,6 +7,7 @@
 #include <stdlib.h> //atoi
 #include <errno.h>
 #include "general_utils.h"
+#include "config_utils.h"
 #include "general_user_utils.h"
 #include "restricted_files_utils.h"
 #include "restrict_group_utils.h"
@@ -14,8 +15,6 @@
 #include "restrict_user_utils.h"
 
 extern FILE *err_fp;
-
-extern struct my_bpf_data restrict_user_read_data;
 
 extern int events_ringbuf_fd;
 
@@ -67,63 +66,6 @@ static int update_restriction_map_user(int outer_map_fd, char file_path[MAX_PATH
     return 0;
 }
 
-static void add_entry_to_config_file_user(char permission_type[6], char syscall_name[16], char file_path[MAX_PATH_LEN], int uid) {
-    char config_file_path[128] = "";
-    snprintf(config_file_path, sizeof(config_file_path), "/home/qwerty/Desktop/bpf_config/%s_user_%s_map.config",permission_type, syscall_name);
-    FILE *fp = fopen(config_file_path, "a");
-    fprintf(fp, "%s %d\n", file_path, uid);
-    fclose(fp);
-}
-
-void addrule_user(char syscall_name[16], char file_path[MAX_PATH_LEN], char username[MAX_USERNAME_LEN]) {
-    int uid = username_to_uid(username);
-    if(uid < 0) {
-        fprintf(err_fp, "user not found\n");
-        return;
-    }
-
-    int default_setting = get_file_default_setting(file_path, "user");
-    char permission_type[6] = "";
-    if(default_setting == DEFAULT_ALLOW)
-        strcpy(permission_type, "deny");
-    else if(default_setting == DEFAULT_DENY)
-        strcpy(permission_type, "allow");
-    else {
-        fprintf(err_fp, "file: %s has not been registered yet\n", file_path);
-        return;
-    }
-
-    char map_name[128] = "";
-    snprintf(map_name, sizeof(map_name), "%s_user_%s_map", permission_type, syscall_name);
-    //struct bpf_map *map = NULL;
-
-    char pin_path[128] = "";
-    snprintf(pin_path, sizeof(pin_path), "/sys/fs/bpf/restrict_user_%s/%s", syscall_name, map_name);
-    int map_fd = bpf_obj_get(pin_path);
-    if (map_fd < 0) 
-        fprintf(err_fp, "ERROR: failed to get the map: %s\n", map_name);
-
-    /*if(strcmp(syscall_name, "open") == 0) {
-    }
-    else if(strcmp(syscall_name, "read") == 0) {
-        map = bpf_object__find_map_by_name(restrict_user_read_data.obj, map_name);
-    }
-    else if(strcmp(syscall_name, "write") == 0) {
-    }
-    else {
-        fprintf(err_fp, "wrong syscall, available syscalls: open, read, write, exec, ock, ioctl, getattr\n"); 
-        return;
-    }
-    int map_fd = bpf_map__fd(map);
-    */       
-    
-    int err = update_restriction_map_user(map_fd, file_path, uid);
-    if(err < 0)
-        return;
-
-    add_entry_to_config_file_user(permission_type, syscall_name, file_path, uid);   
-}
-
 static void init_restriction_map_user(char permission_type[6], char syscall_name[16], struct my_bpf_data *cur_bpf) {
     char config_file_path[128] = "";
     snprintf(config_file_path, sizeof(config_file_path), "/home/qwerty/Desktop/bpf_config/%s_user_%s_map.config", permission_type, syscall_name);
@@ -145,7 +87,7 @@ static void init_restriction_map_user(char permission_type[6], char syscall_name
     // check if configuration is not empty
     char line_buf[MAX_LINE_LEN] = "";
     char file_path[MAX_PATH_LEN] = "";
-    char uid_string[MAX_UID_LEN] = "";
+    char username[MAX_USERNAME_LEN] = "";
     int uid;
     while(fgets(line_buf, MAX_LINE_LEN, fp) != NULL) {
     	int token_id = 0;
@@ -154,11 +96,13 @@ static void init_restriction_map_user(char permission_type[6], char syscall_name
     	    if(token_id == 0)
                 strncpy(file_path, cur_string, MAX_PATH_LEN);
     	    else
-    	    	strncpy(uid_string, cur_string, MAX_UID_LEN);
+    	    	strncpy(username, cur_string, MAX_USERNAME_LEN);
     	    token_id++;
     	    cur_string = strtok(NULL, " \n");   
     	}
-    	uid = atoi(uid_string);
+    	uid = username_to_uid(username);
+        if(uid < 0)
+            continue;
     	update_restriction_map_user(map_fd, file_path, uid);
     }  
 }
@@ -238,4 +182,106 @@ cleanup:
     cur_bpf->obj = NULL;
     cur_bpf->link = NULL;
 	return;
+}
+
+static void add_config_entry_restriction_map_user(char permission_type[6], char syscall_name[16], char file_path[MAX_PATH_LEN], char username[MAX_USERNAME_LEN]) {
+    char config_file_path[128] = "";
+    snprintf(config_file_path, sizeof(config_file_path), "/home/qwerty/Desktop/bpf_config/%s_user_%s_map.config",permission_type, syscall_name);
+    FILE *fp = fopen(config_file_path, "a");
+    fprintf(fp, "%s %s\n", file_path, username);
+    fclose(fp);
+}
+
+void addrule_user(char syscall_name[16], char file_path[MAX_PATH_LEN], char username[MAX_USERNAME_LEN]) {
+    int uid = username_to_uid(username);
+    if(uid < 0) {
+        fprintf(err_fp, "user not found\n");
+        return;
+    }
+
+    int default_setting = get_file_default_setting(file_path, "user");
+    char permission_type[6] = "";
+    if(default_setting == DEFAULT_ALLOW)
+        strcpy(permission_type, "deny");
+    else if(default_setting == DEFAULT_DENY)
+        strcpy(permission_type, "allow");
+    else {
+        fprintf(err_fp, "file: %s has not been registered yet\n", file_path);
+        return;
+    }
+
+    char map_name[128] = "";
+    snprintf(map_name, sizeof(map_name), "%s_user_%s_map", permission_type, syscall_name);
+    //struct bpf_map *map = NULL;
+
+    char pin_path[128] = "";
+    snprintf(pin_path, sizeof(pin_path), "/sys/fs/bpf/restrict_user_%s/%s", syscall_name, map_name);
+    int map_fd = bpf_obj_get(pin_path);
+    if (map_fd < 0) 
+        fprintf(err_fp, "ERROR: failed to get the map: %s\n", map_name);  
+    
+    int err = update_restriction_map_user(map_fd, file_path, uid);
+    if(err < 0)
+        return;
+
+    add_config_entry_restriction_map_user(permission_type, syscall_name, file_path, username);   
+}
+
+static void delete_config_entry_restriction_map_user(char permission_type[6], char syscall_name[16], char file_path[MAX_PATH_LEN], char username[MAX_USERNAME_LEN]) {
+    char config_file_path[128] = "";
+    snprintf(config_file_path, sizeof(config_file_path), "/home/qwerty/Desktop/bpf_config/%s_user_%s_map.config",permission_type, syscall_name);
+
+    char del_line[MAX_LINE_LEN] = "";
+    snprintf(del_line, sizeof(del_line), "%s %s\n", file_path, username);
+
+    delete_config_entry_matching_line(config_file_path, del_line);
+}
+
+void delrule_user(char syscall_name[16], char file_path[MAX_PATH_LEN], char username[MAX_USERNAME_LEN]) {
+    int uid = username_to_uid(username);
+    if(uid < 0) {
+        fprintf(err_fp, "user not found\n");
+        return;
+    }
+
+    int default_setting = get_file_default_setting(file_path, "user");
+    char permission_type[6] = "";
+    if(default_setting == DEFAULT_ALLOW)
+        strcpy(permission_type, "deny");
+    else if(default_setting == DEFAULT_DENY)
+        strcpy(permission_type, "allow");
+    else {
+        fprintf(err_fp, "file: %s has not been registered yet\n", file_path);
+        return;
+    }
+
+    char map_name[128] = "";
+    snprintf(map_name, sizeof(map_name), "%s_user_%s_map", permission_type, syscall_name);
+    //struct bpf_map *map = NULL;
+
+    char pin_path[128] = "";
+    snprintf(pin_path, sizeof(pin_path), "/sys/fs/bpf/restrict_user_%s/%s", syscall_name, map_name);
+    int outer_map_fd = bpf_obj_get(pin_path);
+    if (outer_map_fd < 0) 
+        fprintf(err_fp, "ERROR: failed to get the map: %s\n", map_name);  
+    
+    /*int err = update_restriction_map_user(map_fd, file_path, uid);
+    if(err < 0)
+        return;*/
+
+    int err, inner_map_id, inner_map_fd;
+    err = bpf_map_lookup_elem(outer_map_fd, file_path, &inner_map_id);
+    if(err < 0) {
+        fprintf(err_fp, "inner map for %s does not exist\n", file_path);
+        return;
+    }
+
+    inner_map_fd = bpf_map_get_fd_by_id(inner_map_id);
+    err = bpf_map_delete_elem(inner_map_fd, &uid);
+    if(err < 0) {
+        fprintf(err_fp, "user: %s is not restricted by the rule\n", username);
+        return;
+    }
+
+    delete_config_entry_restriction_map_user(permission_type, syscall_name, file_path, username);   
 }

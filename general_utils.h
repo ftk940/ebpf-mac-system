@@ -4,7 +4,7 @@
 #include <bpf/bpf.h> 
 #include <bpf/libbpf.h> 
 
-#define NR_SYSCALLS 2
+#define NR_SYSCALLS 8
 #define MAX_PATH_LEN 128
 #define MAX_RESTRICTED_FILE_NUM 10
 #define MAX_RESTRICTED_EXEC_NUM_PER_FILE 10
